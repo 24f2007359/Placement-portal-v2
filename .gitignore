@@ -216,3 +216,24 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Vue / Node.js
+node_modules/
+dist/
+.npm
+*.local
+.DS_Store
+
+# Vue CLI / Vite
+.vite/
+.nuxt/
+.output/
+.vuepress/dist
+
+# SQLite (project databases)
+*.sqlite
+*.sqlite3
+*.db
+
+# Redis dump files (additional)
+dump.rdb
