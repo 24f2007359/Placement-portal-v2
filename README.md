@@ -24,11 +24,14 @@ Institutes use this portal to coordinate placement drives between companies and 
 
 ```
 backend/
-  app.py          # Flask application entry point
-  models.py       # SQLAlchemy models
+  app.py            # Flask application entry point
+  models.py         # SQLAlchemy models
+  routes.py         # Auth and dashboard API routes
+  auth_utils.py     # JWT helpers and RBAC decorators
   config.py
-  seed_admin.py   # Creates DB tables + pre-defined admin user
-frontend/         # Vue.js SPA
+  seed_admin.py     # Creates DB tables + pre-defined admin user
+frontend/           # Vue.js SPA (Vite)
+  src/views/        # Login, register, role dashboards
 ```
 
 ## Backend Setup (Milestone 1)
@@ -45,6 +48,38 @@ pip install -r requirements.txt
 python seed_admin.py    # creates SQLite DB + admin user
 python app.py           # starts API on http://127.0.0.1:5000
 ```
+
+## Frontend Setup (Milestone 2)
+
+```bash
+cd frontend
+npm install
+npm run dev             # starts UI on http://127.0.0.1:5173
+```
+
+Run **both** backend and frontend for the full auth flow. Vite proxies `/api` requests to Flask.
+
+### Authentication (Milestone 2)
+
+| Role | Register | Login | Dashboard route |
+|------|----------|-------|-----------------|
+| Admin | No (pre-seeded) | Yes | `/admin/dashboard` |
+| Company | Yes (pending approval) | Yes | `/company/dashboard` |
+| Student | Yes | Yes | `/student/dashboard` |
+
+JWT tokens are issued on login/register and sent as `Authorization: Bearer <token>`.
+
+**API endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/auth/login` | Login for all roles |
+| POST | `/api/auth/register/student` | Student self-registration |
+| POST | `/api/auth/register/company` | Company registration (status: pending) |
+| GET | `/api/auth/me` | Current user profile (protected) |
+| GET | `/api/admin/dashboard` | Admin-only dashboard data |
+| GET | `/api/company/dashboard` | Company-only dashboard data |
+| GET | `/api/student/dashboard` | Student-only dashboard data |
 
 Default admin credentials (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars):
 
@@ -72,7 +107,7 @@ Relationships: Company → JobPosition (1:n), Student → Application (1:n), Job
 |-----------|--------|
 | M0 — GitHub repository setup | Done |
 | M1 — Database models & schema | Done |
-| M2 — Authentication & RBAC | Pending |
+| M2 — Authentication & RBAC | Done |
 | M3–M8 — Core features | Pending |
 
 ## Development Notes

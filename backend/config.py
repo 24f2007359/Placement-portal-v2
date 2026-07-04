@@ -13,3 +13,6 @@ class Config:
     # Default admin credentials (override via env in production)
     ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@placement.local")
     ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+
+    JWT_ALGORITHM = "HS256"
+    JWT_EXPIRATION_HOURS = int(os.environ.get("JWT_EXPIRATION_HOURS", 24))

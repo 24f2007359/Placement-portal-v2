@@ -237,3 +237,4 @@ dist/
 
 # Redis dump files (additional)
 dump.rdb
+docs/

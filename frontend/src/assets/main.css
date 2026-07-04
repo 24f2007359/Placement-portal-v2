@@ -1,0 +1,12 @@
+body {
+  background-color: #f8f9fa;
+}
+
+.auth-card {
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.dashboard-card {
+  min-height: 280px;
+}
