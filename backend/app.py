@@ -5,6 +5,7 @@ from flask_cors import CORS
 
 from config import Config
 from models import db
+from admin_routes import admin_bp
 from routes import auth_bp, dashboard_bp
 
 app = Flask(__name__)
@@ -17,6 +18,7 @@ CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"])
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(dashboard_bp)
+app.register_blueprint(admin_bp)
 
 
 @app.route("/api/health")

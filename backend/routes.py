@@ -152,28 +152,29 @@ def me():
     return jsonify({"user": user_response(g.current_user)})
 
 
-@dashboard_bp.route("/admin/dashboard", methods=["GET"])
-@role_required("admin")
-def admin_dashboard():
-    return jsonify(
-        {
-            "message": "Welcome to the Admin dashboard",
-            "role": "admin",
-        }
-    )
-
-
 @dashboard_bp.route("/company/dashboard", methods=["GET"])
 @role_required("company")
 def company_dashboard():
     company = g.current_user.company
-    approved = company and company.approval_status == ApprovalStatus.APPROVED
+    if not company:
+        return jsonify({"error": "Company profile not found"}), 404
+
+    approved = company.approval_status == ApprovalStatus.APPROVED
+    if not approved or company.is_blacklisted or not g.current_user.is_active:
+        return jsonify(
+            {
+                "error": "Dashboard access requires admin approval",
+                "approval_status": company.approval_status.value,
+                "approved": False,
+            }
+        ), 403
+
     return jsonify(
         {
             "message": "Welcome to the Company dashboard",
             "role": "company",
-            "approved": approved,
-            "approval_status": company.approval_status.value if company else None,
+            "approved": True,
+            "approval_status": company.approval_status.value,
         }
     )
 

@@ -27,6 +27,7 @@ backend/
   app.py            # Flask application entry point
   models.py         # SQLAlchemy models
   routes.py         # Auth and dashboard API routes
+  admin_routes.py   # Admin management APIs (Milestone 3)
   auth_utils.py     # JWT helpers and RBAC decorators
   config.py
   seed_admin.py     # Creates DB tables + pre-defined admin user
@@ -81,6 +82,29 @@ JWT tokens are issued on login/register and sent as `Authorization: Bearer <toke
 | GET | `/api/company/dashboard` | Company-only dashboard data |
 | GET | `/api/student/dashboard` | Student-only dashboard data |
 
+### Admin Management (Milestone 3)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/dashboard` | Stats: students, companies, jobs, applications |
+| GET | `/api/admin/companies` | Search companies (`q`, `industry`, `status`) |
+| PUT | `/api/admin/companies/:id/approve` | Approve company |
+| PUT | `/api/admin/companies/:id/reject` | Reject company |
+| PUT | `/api/admin/companies/:id/blacklist` | Blacklist company |
+| DELETE | `/api/admin/companies/:id` | Remove company |
+| GET | `/api/admin/students` | Search students (`q` = name/ID/contact) |
+| PUT | `/api/admin/students/:id/blacklist` | Blacklist student |
+| PUT | `/api/admin/students/:id/deactivate` | Deactivate student |
+| PUT | `/api/admin/students/:id/activate` | Reactivate student |
+| DELETE | `/api/admin/students/:id` | Remove student |
+| GET | `/api/admin/jobs` | List job postings (`q`, `status`) |
+| PUT | `/api/admin/jobs/:id/approve` | Approve placement drive |
+| PUT | `/api/admin/jobs/:id/reject` | Reject/close drive |
+| DELETE | `/api/admin/jobs/:id` | Remove job posting |
+| GET | `/api/admin/applications` | View all applications |
+
+Companies must be **approved by admin** before they can access the company dashboard.
+
 Default admin credentials (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars):
 
 | Field | Value |
@@ -108,7 +132,8 @@ Relationships: Company → JobPosition (1:n), Student → Application (1:n), Job
 | M0 — GitHub repository setup | Done |
 | M1 — Database models & schema | Done |
 | M2 — Authentication & RBAC | Done |
-| M3–M8 — Core features | Pending |
+| M3 — Admin dashboard & management | Done |
+| M4–M8 — Core features | Pending |
 
 ## Development Notes
 
