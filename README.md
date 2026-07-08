@@ -28,6 +28,7 @@ backend/
   models.py         # SQLAlchemy models
   routes.py         # Auth and dashboard API routes
   admin_routes.py   # Admin management APIs (Milestone 3)
+  company_routes.py # Company job/application APIs (Milestone 4)
   auth_utils.py     # JWT helpers and RBAC decorators
   config.py
   seed_admin.py     # Creates DB tables + pre-defined admin user
@@ -105,6 +106,18 @@ JWT tokens are issued on login/register and sent as `Authorization: Bearer <toke
 
 Companies must be **approved by admin** before they can access the company dashboard.
 
+### Company Management (Milestone 4)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/company/dashboard` | Company dashboard stats |
+| GET | `/api/company/jobs` | List/search own job postings (`q`, `status`) |
+| POST | `/api/company/jobs` | Create job posting (starts as `pending`) |
+| PUT | `/api/company/jobs/:id` | Update own job details / set Active or Closed |
+| GET | `/api/company/jobs/:id/applications` | View applicants for a specific job |
+| GET | `/api/company/applications` | View all received applications (`status`) |
+| PUT | `/api/company/applications/:id/status` | Shortlist/interview/offer/reject with feedback |
+
 Default admin credentials (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars):
 
 | Field | Value |
@@ -133,7 +146,8 @@ Relationships: Company → JobPosition (1:n), Student → Application (1:n), Job
 | M1 — Database models & schema | Done |
 | M2 — Authentication & RBAC | Done |
 | M3 — Admin dashboard & management | Done |
-| M4–M8 — Core features | Pending |
+| M4 — Company dashboard & job/application management | Done |
+| M5–M8 — Core features | Pending |
 
 ## Development Notes
 
