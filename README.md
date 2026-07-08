@@ -29,6 +29,7 @@ backend/
   routes.py         # Auth and dashboard API routes
   admin_routes.py   # Admin management APIs (Milestone 3)
   company_routes.py # Company job/application APIs (Milestone 4)
+  student_routes.py # Student profile/job/application APIs (Milestone 5)
   auth_utils.py     # JWT helpers and RBAC decorators
   config.py
   seed_admin.py     # Creates DB tables + pre-defined admin user
@@ -118,6 +119,22 @@ Companies must be **approved by admin** before they can access the company dashb
 | GET | `/api/company/applications` | View all received applications (`status`) |
 | PUT | `/api/company/applications/:id/status` | Shortlist/interview/offer/reject with feedback |
 
+### Student Management (Milestone 5)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/student/dashboard` | Student dashboard stats |
+| GET | `/api/student/profile` | View full student profile |
+| PUT | `/api/student/profile` | Update education, skills, experience, CGPA, etc. |
+| POST | `/api/student/profile/resume` | Upload resume file (pdf/doc/docx/txt) |
+| GET | `/api/student/jobs` | Browse approved placement drives (`q`, `company`) |
+| POST | `/api/student/jobs/:id/apply` | Apply for a job (eligibility + duplicate checks) |
+| GET | `/api/student/applications` | List own applications with status/feedback |
+| GET | `/api/student/applications/:id` | Application detail |
+| GET | `/api/student/applications/:id/offer-letter` | Download offer letter for offer/placed status |
+
+Students only see jobs from **approved companies** with job status **approved** or **active**. Duplicate applications to the same job are blocked.
+
 Default admin credentials (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars):
 
 | Field | Value |
@@ -147,7 +164,8 @@ Relationships: Company → JobPosition (1:n), Student → Application (1:n), Job
 | M2 — Authentication & RBAC | Done |
 | M3 — Admin dashboard & management | Done |
 | M4 — Company dashboard & job/application management | Done |
-| M5–M8 — Core features | Pending |
+| M5 — Student dashboard & job application system | Done |
+| M6–M8 — Core features | Pending |
 
 ## Development Notes
 

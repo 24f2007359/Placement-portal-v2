@@ -86,6 +86,13 @@ def user_response(user):
             "full_name": user.student.full_name,
             "institute_id": user.student.institute_id,
             "contact": user.student.contact,
+            "branch": user.student.branch,
+            "cgpa": user.student.cgpa,
+            "graduation_year": user.student.graduation_year,
+            "skills": user.student.skills,
+            "education": user.student.education,
+            "experience": user.student.experience,
+            "resume_path": user.student.resume_path,
             "is_blacklisted": user.student.is_blacklisted,
         }
 

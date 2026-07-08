@@ -8,6 +8,7 @@ from models import db
 from admin_routes import admin_bp
 from company_routes import company_bp
 from routes import auth_bp, dashboard_bp
+from student_routes import student_bp
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -21,6 +22,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(company_bp)
+app.register_blueprint(student_bp)
 
 
 @app.route("/api/health")

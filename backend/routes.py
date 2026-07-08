@@ -1,6 +1,6 @@
 from flask import Blueprint, g, jsonify, request
 
-from auth_utils import create_token, role_required, token_required, user_response
+from auth_utils import create_token, token_required, user_response
 from models import ApprovalStatus, Company, Student, User, UserRole, db
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -150,17 +150,6 @@ def register_company():
 @token_required
 def me():
     return jsonify({"user": user_response(g.current_user)})
-
-
-@dashboard_bp.route("/student/dashboard", methods=["GET"])
-@role_required("student")
-def student_dashboard():
-    return jsonify(
-        {
-            "message": "Welcome to the Student dashboard",
-            "role": "student",
-        }
-    )
 
 
 def _dashboard_path(role):
