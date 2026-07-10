@@ -34,8 +34,10 @@ backend/
   celery_app.py     # Celery instance, beat schedule, Flask context (Milestone 7)
   tasks.py          # Background jobs: reminders, reports, CSV exports (Milestone 7)
   mail_utils.py     # Gmail SMTP sender with console fallback (Milestone 7)
+  cache_utils.py    # Redis @cached decorator + namespace invalidation (Milestone 8)
   auth_utils.py     # JWT helpers and RBAC decorators
   config.py
+  .env              # Mail credentials (gitignored)
   seed_admin.py     # Creates DB tables + pre-defined admin user
   instance/
     placement.db    # SQLite database
@@ -211,6 +213,41 @@ export MAIL_PASSWORD="<16-char Gmail App Password>"
 
 Create an [App Password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification); Gmail rejects normal passwords over SMTP. **If unset, emails are logged to the console instead of sent** — jobs never crash on a missing mail config.
 
+Credentials live in `backend/.env` (gitignored), loaded by `python-dotenv`.
+
+### Redis Caching (Milestone 8)
+
+Frequently-read endpoints are cached in Redis. Measured on a 60-job listing: **18.31 ms → 1.47 ms, a 12.5× speedup.**
+
+| Endpoint | Namespace | TTL | Keyed per user? |
+|----------|-----------|-----|-----------------|
+| `GET /api/student/jobs` | `jobs` | 60s | **Yes** — carries `already_applied` for the caller |
+| `GET /api/company/jobs` | `jobs` | 60s | **Yes** — only that company's postings |
+| `GET /api/admin/jobs` | `jobs` | 60s | No |
+| `GET /api/admin/companies` | `companies` | 120s | No |
+| `GET /api/admin/students` | `students` | 120s | No |
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/cache/stats` | Per-namespace version, live key count, TTL, Redis hit rate |
+| POST | `/api/admin/cache/flush` | Invalidate every namespace (3 × `INCR`, never `FLUSHDB`) |
+
+**Expiry policy** — every entry is written with `SETEX`, so a missed invalidation goes stale for at most the TTL rather than forever.
+
+**Refresh policy** — every write path explicitly invalidates, so in practice you never wait out the TTL. Approving a job, or blacklisting a company, removes its drives from every student's cached listing *immediately*.
+
+**How invalidation scales:** each cache key embeds a namespace version (`…:jobs:v7:…`). Invalidating the whole namespace is a single atomic `INCR` — O(1) regardless of how many entries it affects, no `KEYS` scan, no blocking. Old-version keys are orphaned and expire on their own TTL.
+
+Every cached response carries an `X-Cache: HIT|MISS` header:
+
+```bash
+curl -sI localhost:5000/api/student/jobs -H "Authorization: Bearer $TOKEN" | grep X-Cache
+```
+
+**Redis is optional.** If it's down, every read degrades to a cache miss and serves correct data straight from the database; writes still succeed. Set `CACHE_ENABLED=0` to bypass the cache entirely.
+
+Redis DB layout: `db 0` Celery broker · `db 1` Celery results · `db 2` this cache — so flushing the cache can never eat a queued job.
+
 Default admin credentials (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars):
 
 | Field | Value |
@@ -244,7 +281,8 @@ Relationships: Company → JobPosition (1:n), Student → Application (1:n), Job
 | M5 — Student dashboard & job application system | Done |
 | M6 — Application history & status tracking | Done |
 | M7 — Celery + Redis background jobs | Done |
-| M8 — Redis caching | Pending |
+| M8 — API optimization & Redis caching | Done |
+| **All 8 core milestones complete** | **100%** |
 
 ## Development Notes
 

@@ -1,18 +1,53 @@
+<!--
+  =============================================================================
+  FILE : src/views/CompanyDashboard.vue
+  ROUTE: /company/dashboard   (meta: requiresAuth + role:'company')
+  WHAT : the recruiter's console. 4 stat cards + 4 tabs.
+           My Jobs      -> list/search own postings, close/activate, see applicants
+           Post Job     -> create OR edit a posting (same form, jobForm.id decides)
+           Applications -> move candidates along the pipeline + Timeline/Profile modals
+           Placements   -> who you actually hired (M6)
+
+  TALKS TO: services/company.js -> /api/company/*  (backend/company_routes.py)
+            services/exports.js -> /api/exports/*  (backend/export_routes.py, M7)
+
+  !! THE APPROVAL GATE !!
+  a freshly-registered company has approval_status=PENDING. every /api/company/*
+  route runs _ensure_company_access() which 403s them. so onMounted() below
+  catches a 403 and flips `pendingApproval` -> we render the yellow banner and
+  NOTHING else. no tabs, no stats. an admin has to hit Approve first.
+
+  PIPELINE this view drives (the heart of M6):
+    applied -> shortlisted -> interview -> offer -> placed
+                                              \-> rejected
+  every button here writes an ApplicationStatusHistory row backend-side, and
+  offer/placed also upserts a Placement row.
+  =============================================================================
+-->
 <template>
   <div>
     <h2 class="mb-1">Company Dashboard</h2>
+    <!-- company profile uses .name; student uses .full_name. different shapes. -->
     <p class="text-muted mb-4">{{ auth.user?.profile?.name }}</p>
 
     <div v-if="error" class="alert alert-danger">{{ error }}</div>
     <div v-if="success" class="alert alert-success">{{ success }}</div>
 
+    <!-- three-way render: loading / blocked / actual dashboard.
+         the v-if..v-else-if..v-else chain means only ONE ever shows. -->
     <div v-if="loading" class="alert alert-info">Loading dashboard...</div>
+
+    <!-- the 403 wall. approvalStatus comes off the error body, so it says
+         "pending" or "rejected" accurately instead of a generic message. -->
     <div v-else-if="pendingApproval" class="alert alert-warning">
       Your company profile is <strong>{{ approvalStatus }}</strong>.
       Dashboard access is available only after admin approval.
     </div>
 
     <template v-else>
+      <!-- ===================== STAT CARDS =====================
+           from GET /api/company/dashboard. only 4 -> col-md-3 fits them in one
+           row exactly (12/4=3). student dash needed `col-md` because it has 5. -->
       <div class="row g-3 mb-4">
         <div class="col-md-3 col-6">
           <div class="card text-center shadow-sm">
@@ -60,6 +95,9 @@
         </li>
       </ul>
 
+      <!-- ===================== TAB 1: MY JOBS =====================
+           backend scopes everything by company_id from the JWT, so you can
+           never see or touch another company's postings. -->
       <div v-show="activeTab === 'jobs'" class="card shadow-sm">
         <div class="card-body">
           <form class="row g-2 mb-3" @submit.prevent="loadJobs">
@@ -98,6 +136,8 @@
                   <td>{{ job.applications_count }}</td>
                   <td>{{ formatDate(job.application_deadline) }}</td>
                   <td class="d-flex flex-wrap gap-1">
+                    <!-- Edit -> loads this job INTO jobForm and jumps to the
+                         Post Job tab, which then acts as an edit form. -->
                     <button class="btn btn-sm btn-outline-primary" @click="openJobEditor(job)">Edit</button>
                     <button
                       v-if="job.status !== 'closed'"
@@ -106,6 +146,10 @@
                     >
                       Close
                     </button>
+                    <!-- "Set Active" ONLY shows on status==='approved'.
+                         you cannot go pending -> active; the backend rejects it
+                         ("Pending jobs must be approved by admin before activation").
+                         so: post -> admin approves -> THEN you can activate. -->
                     <button
                       v-if="job.status === 'approved'"
                       class="btn btn-sm btn-success"
@@ -113,6 +157,8 @@
                     >
                       Set Active
                     </button>
+                    <!-- jumps to the Applications tab, pre-filtered to THIS job.
+                         sets selectedJob so later refreshes stay scoped to it. -->
                     <button class="btn btn-sm btn-info text-white" @click="openJobApplications(job)">
                       Applicants
                     </button>
@@ -127,6 +173,11 @@
         </div>
       </div>
 
+      <!-- ===================== TAB 2: POST / EDIT JOB =====================
+           ONE form does double duty. `jobForm.id` is the switch:
+             id === null -> POST /api/company/jobs   (create, lands as 'pending')
+             id !== null -> PUT  /api/company/jobs/:id (edit)
+           that's why the heading + button label are ternaries. -->
       <div v-show="activeTab === 'post-job'" class="card shadow-sm">
         <div class="card-body">
           <h5 class="mb-3">{{ jobForm.id ? 'Edit Job Posting' : 'Post New Job' }}</h5>
@@ -161,12 +212,18 @@
             </div>
             <div class="col-md-6">
               <label class="form-label">Application Deadline</label>
+              <!-- type=datetime-local wants 'YYYY-MM-DDTHH:MM' (no timezone, no
+                   seconds). backend stores ISO. toDateTimeLocal() converts one
+                   way, submitJob() does .toISOString() the other way. -->
               <input v-model="jobForm.application_deadline" type="datetime-local" class="form-control" />
             </div>
             <div class="col-12 d-flex gap-2">
+              <!-- type="submit" -> triggers @submit.prevent="submitJob" -->
               <button class="btn btn-primary" type="submit">
                 {{ jobForm.id ? 'Update Job' : 'Post Job (for Admin Approval)' }}
               </button>
+              <!-- type="button" is MANDATORY here. default type inside a <form>
+                   is "submit", so without it Cancel would fire submitJob(). -->
               <button v-if="jobForm.id" class="btn btn-secondary" type="button" @click="resetJobForm">
                 Cancel Edit
               </button>
@@ -175,6 +232,10 @@
         </div>
       </div>
 
+      <!-- ===================== TAB 3: APPLICATIONS =====================
+           shows EITHER all applications across all your jobs, OR just one job's
+           applicants if you arrived via the "Applicants" button (selectedJob set).
+           changing the status filter clears selectedJob -> back to global view. -->
       <div v-show="activeTab === 'applications'" class="card shadow-sm">
         <div class="card-body">
           <div class="row g-2 mb-3 align-items-center">
@@ -216,12 +277,26 @@
                   <td>{{ app.job_title }}</td>
                   <td><span class="badge" :class="applicationStatusBadge(app.status)">{{ app.status }}</span></td>
                   <td>{{ formatDate(app.interview_date) }}</td>
+                  <!--
+                    THE PIPELINE BUTTONS. all but "Place" go straight through
+                    setApplicationStatus() which window.prompt()s for feedback.
+                    "Interview" additionally prompts for a date-time -- that date
+                    is what the M7 daily celery job scans to email reminders.
+
+                    "Place" is special: it needs position + salary + joining date,
+                    which is too much for a prompt(), so it opens a proper modal
+                    (openPlacementModal -> confirmPlacement).
+
+                    note there's no "un-reject". status changes are one-way in the
+                    UI, though the backend would happily accept going backwards.
+                  -->
                   <td class="d-flex flex-wrap gap-1">
                     <button class="btn btn-sm btn-primary" @click="setApplicationStatus(app, 'shortlisted')">Shortlist</button>
                     <button class="btn btn-sm btn-secondary" @click="setApplicationStatus(app, 'interview')">Interview</button>
                     <button class="btn btn-sm btn-success" @click="setApplicationStatus(app, 'offer')">Offer</button>
                     <button class="btn btn-sm btn-outline-success" @click="openPlacementModal(app)">Place</button>
                     <button class="btn btn-sm btn-danger" @click="setApplicationStatus(app, 'rejected')">Reject</button>
+                    <!-- read-only modals (M6) -->
                     <button class="btn btn-sm btn-outline-secondary" @click="openTimeline(app)">Timeline</button>
                     <button class="btn btn-sm btn-outline-info" @click="openProfile(app)">Profile</button>
                   </td>
@@ -235,6 +310,10 @@
         </div>
       </div>
 
+      <!-- ===================== TAB 4: PLACEMENTS (M6) =====================
+           Placement rows appear the moment you mark someone offer or placed.
+           read-only here -- to change one, re-run the Place action on the
+           application (backend UPDATES the existing row, never duplicates). -->
       <div v-show="activeTab === 'placements'" class="card shadow-sm">
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-center mb-3">
@@ -273,7 +352,10 @@
       </div>
     </template>
 
-    <!-- Placement details modal -->
+    <!-- ===================== MODAL 1: RECORD PLACEMENT (M6) =====================
+         placementModal.app doubles as the open/closed flag AND the payload target.
+         submitting PUTs status:'placed' + position/salary/joining_date, which
+         makes the backend upsert a Placement row and log the history entry. -->
     <div v-if="placementModal.app" class="modal-backdrop-custom" @click.self="placementModal.app = null">
       <div class="card shadow modal-card">
         <div class="card-body">
@@ -307,7 +389,10 @@
       </div>
     </div>
 
-    <!-- Status history timeline modal -->
+    <!-- ===================== MODAL 2: STATUS TIMELINE (M6) =====================
+         same markup as the one in StudentDashboard.vue, just labelled with the
+         student's name instead of the company's. fed by
+         GET /api/company/applications/:id -> status_history[] -->
     <div v-if="timelineApp" class="modal-backdrop-custom" @click.self="timelineApp = null">
       <div class="card shadow modal-card">
         <div class="card-body">
@@ -332,7 +417,10 @@
       </div>
     </div>
 
-    <!-- Student profile modal -->
+    <!-- ===================== MODAL 3: APPLICANT PROFILE (M6) =====================
+         GET /api/company/students/:id
+         SECURITY: backend 404s unless this student applied to one of YOUR jobs.
+         you can't walk student ids and scrape the whole batch. -->
     <div v-if="profileStudent" class="modal-backdrop-custom" @click.self="profileStudent = null">
       <div class="card shadow modal-card">
         <div class="card-body">
@@ -340,12 +428,16 @@
             <h5 class="mb-0">Applicant Profile</h5>
             <button class="btn-close" @click="profileStudent = null"></button>
           </div>
+          <!-- <dl> = description list. dt = term, dd = definition. semantic
+               key/value markup, beats a table for a single record. -->
           <dl class="row mb-0">
             <dt class="col-sm-4">Name</dt><dd class="col-sm-8">{{ profileStudent.full_name }}</dd>
             <dt class="col-sm-4">Email</dt><dd class="col-sm-8">{{ profileStudent.email || '—' }}</dd>
             <dt class="col-sm-4">Institute ID</dt><dd class="col-sm-8">{{ profileStudent.institute_id || '—' }}</dd>
             <dt class="col-sm-4">Contact</dt><dd class="col-sm-8">{{ profileStudent.contact || '—' }}</dd>
             <dt class="col-sm-4">Branch</dt><dd class="col-sm-8">{{ profileStudent.branch || '—' }}</dd>
+            <!-- ?? not || here! a CGPA of 0 is falsy, so `0 || '—'` would print
+                 a dash. ?? only falls through on null/undefined. -->
             <dt class="col-sm-4">CGPA</dt><dd class="col-sm-8">{{ profileStudent.cgpa ?? '—' }}</dd>
             <dt class="col-sm-4">Grad. Year</dt><dd class="col-sm-8">{{ profileStudent.graduation_year || '—' }}</dd>
             <dt class="col-sm-4">Skills</dt><dd class="col-sm-8">{{ profileStudent.skills || '—' }}</dd>
@@ -365,11 +457,18 @@ import { companyApi } from '../services/company'
 import { downloadExport, exportApi, runExport } from '../services/exports'
 
 const auth = useAuth()
+
+// --- top level ui state ------------------------------------------------------
 const loading = ref(true)
 const error = ref('')
 const success = ref('')
+
+// the 403 wall. set by onMounted() when the dashboard call comes back 403.
+// approvalStatus holds 'pending' | 'rejected' straight from the error body.
 const pendingApproval = ref(false)
 const approvalStatus = ref('')
+
+// mirrors GET /api/company/dashboard -> stats{}
 const stats = reactive({
   job_postings: 0,
   active_jobs: 0,
@@ -385,16 +484,24 @@ const tabs = [
 ]
 const activeTab = ref('jobs')
 
+// --- table data --------------------------------------------------------------
 const jobs = ref([])
 const applications = ref([])
 const placements = ref([])
+
+// selectedJob: non-null means the Applications tab is scoped to ONE job (you got
+// there via the "Applicants" button). refreshApplications() reads this to decide
+// whether to re-fetch that job's applicants or the global list.
 const selectedJob = ref(null)
 
+// --- modal state (each *App / *Student ref doubles as the open/closed flag) ---
 const timelineApp = ref(null)
 const timeline = ref([])
 const profileStudent = ref(null)
 const exporting = ref(false)
 const exportState = ref('')
+
+// the Record Placement modal. `app` null = closed. the rest is the form.
 const placementModal = reactive({
   app: null,
   position: '',
@@ -405,6 +512,8 @@ const placementModal = reactive({
 
 const jobSearch = reactive({ q: '', status: '' })
 const applicationFilter = reactive({ status: '' })
+
+// the create/edit job form. `id` is the create-vs-edit switch (null = create).
 const jobForm = reactive({
   id: null,
   title: '',
@@ -417,16 +526,33 @@ const jobForm = reactive({
   application_deadline: '',
 })
 
+/** wipe both alert bars. first line of basically every action fn. */
 function clearMessages() {
   error.value = ''
   success.value = ''
 }
 
+/** ISO -> readable local string, em-dash when null. */
 function formatDate(value) {
   if (!value) return '—'
   return new Date(value).toLocaleString()
 }
 
+/**
+ * toDateTimeLocal(isoString) -> 'YYYY-MM-DDTHH:MM'
+ * what : convert a backend ISO timestamp into the exact format that
+ *        <input type="datetime-local"> demands. anything else = blank input.
+ * where: openJobEditor(), when loading an existing job into the form.
+ *
+ * the timezone dance:
+ *   .toISOString() always spits out UTC ('...Z'). but datetime-local expects
+ *   LOCAL wall-clock time. so we subtract the offset first, THEN call
+ *   toISOString(), which effectively bakes local time into the UTC-shaped string.
+ *   getTimezoneOffset() is in MINUTES, hence * 60000 to get ms.
+ *   .slice(0,16) chops off ':ss.sssZ' -> leaves 'YYYY-MM-DDTHH:MM'.
+ *
+ * submitJob() does the reverse: new Date(local).toISOString().
+ */
 function toDateTimeLocal(value) {
   if (!value) return ''
   const d = new Date(value)
@@ -434,6 +560,8 @@ function toDateTimeLocal(value) {
   return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16)
 }
 
+/** JOB status -> badge colour. pending=yellow (waiting on admin),
+ *  approved=green, active=blue (live, students can apply), closed=grey. */
 function jobStatusBadge(status) {
   return {
     pending: 'bg-warning text-dark',
@@ -443,6 +571,8 @@ function jobStatusBadge(status) {
   }[status] || 'bg-secondary'
 }
 
+/** APPLICATION status -> badge colour. (different enum from jobStatusBadge!)
+ *  same fn also lives in StudentDashboard.vue + AdminDashboard.vue. */
 function applicationStatusBadge(status) {
   return {
     applied: 'bg-secondary',
@@ -454,33 +584,49 @@ function applicationStatusBadge(status) {
   }[status] || 'bg-secondary'
 }
 
+/** GET /api/company/dashboard -> stat cards.
+ *  ALSO the tripwire: this is the first call onMounted fires, so its 403 is
+ *  what triggers the pendingApproval banner. */
 async function loadDashboard() {
   const { data } = await companyApi.getDashboard()
   Object.assign(stats, data.stats)
 }
 
+/** GET /api/company/jobs?q=&status= -> My Jobs table (own postings only). */
 async function loadJobs() {
   const { data } = await companyApi.getJobs({ ...jobSearch })
   jobs.value = data.jobs
 }
 
+/** GET /api/company/applications[?status=] -> ALL applicants across all jobs. */
 async function loadApplications() {
   const params = applicationFilter.status ? { status: applicationFilter.status } : {}
   const { data } = await companyApi.getApplications(params)
   applications.value = data.applications
 }
 
+/** GET /api/company/placements -> Placements tab. (M6) */
 async function loadPlacements() {
   const { data } = await companyApi.getPlacements()
   placements.value = data.placements
 }
 
+/**
+ * onFilterChange()
+ * what : @change handler on the status dropdown.
+ * why not just call loadApplications directly? because if you'd previously hit
+ *        "Applicants" on one job, selectedJob is still set and refreshApplications()
+ *        would keep snapping you back to that single job. clearing it first means
+ *        "filter by status" searches ALL your applications, which is what a user
+ *        expects when they touch a global filter.
+ */
 function onFilterChange() {
   // Filtering shows all matching applications, not just the last opened job.
   selectedJob.value = null
   loadApplications()
 }
 
+/** re-pull everything. used on mount and after any job create/edit/status change. */
 async function refreshAll() {
   await loadDashboard()
   await loadJobs()
@@ -488,7 +634,13 @@ async function refreshAll() {
   await loadPlacements()
 }
 
-/** Kick off a Celery export, poll until the worker finishes, then download. */
+/**
+ * runAndDownload(startFn, label)   [M7]
+ * identical twin of the one in StudentDashboard.vue -- queue a celery export,
+ * poll it, download the CSV. see services/exports.js::runExport() for the guts.
+ * kept duplicated (not hoisted into a composable) so each dashboard stays
+ * readable on its own. if it grows a third copy, refactor it out.
+ */
 async function runAndDownload(startFn, label) {
   clearMessages()
   exporting.value = true
@@ -514,6 +666,9 @@ const exportApplications = () =>
 const exportPlacements = () =>
   runAndDownload(exportApi.startPlacementsExport, 'Placements')
 
+/** blank the job form back to "create" mode (id=null).
+ *  called after a successful save, and by the Cancel Edit button.
+ *  Object.assign, not reassignment -- jobForm is a reactive const. */
 function resetJobForm() {
   Object.assign(jobForm, {
     id: null,
@@ -528,6 +683,15 @@ function resetJobForm() {
   })
 }
 
+/**
+ * openJobEditor(job)
+ * what : the "Edit" button on My Jobs. copies the row into jobForm and yanks
+ *        you over to the Post Job tab, which morphs into an edit form because
+ *        jobForm.id is now set.
+ * `|| ''` on every string -> the API sends null for empty columns, and binding
+ *        null into an <input> renders the literal text "null". '' is what we want.
+ * deadline needs the toDateTimeLocal() conversion, see that fn's notes.
+ */
 function openJobEditor(job) {
   Object.assign(jobForm, {
     id: job.id,
@@ -543,6 +707,17 @@ function openJobEditor(job) {
   activeTab.value = 'post-job'
 }
 
+/**
+ * submitJob()
+ * what : the one submit handler for BOTH create and edit.
+ *        jobForm.id truthy -> PUT (update). falsy -> POST (create).
+ * deadline: datetime-local gives us local wall-clock; .toISOString() converts to
+ *        UTC for the backend. empty string -> send null, not ''.
+ * after: reset the form, bounce back to the My Jobs tab, refresh everything
+ *        (a new job changes both the jobs table AND the stat cards).
+ * remember: a newly created job is 'pending'. it is INVISIBLE to students until
+ *        an admin approves it.
+ */
 async function submitJob() {
   clearMessages()
   try {
@@ -573,6 +748,12 @@ async function submitJob() {
   }
 }
 
+/**
+ * changeJobStatus(job, status)  -> PUT /api/company/jobs/:id { status }
+ * what : the Close / Set Active buttons.
+ * only 'active' and 'closed' are legal here. and pending -> active is refused
+ *        backend-side, which is exactly why "Set Active" only renders on approved.
+ */
 async function changeJobStatus(job, status) {
   clearMessages()
   try {
@@ -584,6 +765,14 @@ async function changeJobStatus(job, status) {
   }
 }
 
+/**
+ * openJobApplications(job) -> GET /api/company/jobs/:id/applications
+ * what : the "Applicants" button. shows only THIS job's applicants.
+ * side effect: sets selectedJob, which makes refreshApplications() keep the view
+ *        scoped to this job after every status change. onFilterChange() clears it.
+ * note : it overwrites the same `applications` ref the global list uses -- the
+ *        table doesn't know or care which one it's showing.
+ */
 async function openJobApplications(job) {
   clearMessages()
   try {
@@ -596,6 +785,25 @@ async function openJobApplications(job) {
   }
 }
 
+/**
+ * setApplicationStatus(application, status)
+ *   -> PUT /api/company/applications/:id/status
+ * what : Shortlist / Interview / Offer / Reject buttons.
+ *
+ * the prompt() dance:
+ *   window.prompt returns null if you hit Cancel, '' if you hit OK on an empty
+ *   box. we check `!== null` so an intentional empty feedback still gets sent
+ *   (backend turns '' into None and clears the old feedback). crude, yes --
+ *   proper modals would be nicer, but this keeps the demo simple.
+ *
+ * interview_date: only asked for on 'interview'. THIS DATE MATTERS -- the M7
+ *   celery beat job (tasks.send_interview_reminders, daily 9am) scans for
+ *   applications with status=interview and interview_date within 24h, and mails
+ *   the student. no date = no reminder.
+ *
+ * backend side effects: writes an ApplicationStatusHistory row, and on
+ *   offer/placed also upserts the Placement.
+ */
 async function setApplicationStatus(application, status) {
   clearMessages()
   const payload = { status }
@@ -618,6 +826,16 @@ async function setApplicationStatus(application, status) {
   }
 }
 
+/**
+ * refreshApplications()
+ * what : reload after a status change, WITHOUT losing your place.
+ *        if you were looking at one job's applicants -> re-fetch that job's list.
+ *        otherwise -> re-fetch the global list.
+ * also refreshes stats (shortlisted count moved) and placements (an offer/placed
+ * may have just created a Placement row).
+ * why not refreshAll()? it'd re-fetch jobs and, worse, clobber the single-job
+ *        view back to the global one.
+ */
 async function refreshApplications() {
   if (selectedJob.value) {
     await openJobApplications(selectedJob.value)
@@ -628,6 +846,9 @@ async function refreshApplications() {
   await loadPlacements()
 }
 
+/** openTimeline(app) -> GET /api/company/applications/:id, pull status_history.
+ *  same pattern as StudentDashboard: open modal instantly, blank the old rows,
+ *  then fill. (list endpoint omits history, so this second call is required.) */
 async function openTimeline(application) {
   clearMessages()
   timelineApp.value = application
@@ -640,6 +861,9 @@ async function openTimeline(application) {
   }
 }
 
+/** openProfile(app) -> GET /api/company/students/:id
+ *  null it first so the modal doesn't flash the PREVIOUS applicant's details
+ *  while the new request is in flight (v-if keeps it shut until data lands). */
 async function openProfile(application) {
   clearMessages()
   profileStudent.value = null
@@ -651,6 +875,13 @@ async function openProfile(application) {
   }
 }
 
+/**
+ * openPlacementModal(application)
+ * what : the "Place" button. purely local -- no API call yet.
+ * prefills position with the job title (99% of the time that's right, and HR
+ * can overwrite it). explicitly blanks salary/date/feedback so leftovers from
+ * the LAST candidate you placed don't leak into this one.
+ */
 function openPlacementModal(application) {
   clearMessages()
   placementModal.app = application
@@ -660,6 +891,17 @@ function openPlacementModal(application) {
   placementModal.feedback = ''
 }
 
+/**
+ * confirmPlacement() -> PUT /api/company/applications/:id/status
+ * what : submit handler for the Record Placement modal.
+ * sends status:'placed' plus the placement fields. backend then:
+ *   1. logs the history row (offer -> placed)
+ *   2. _upsert_placement() creates the Placement, or UPDATES it if this
+ *      application already had one (from an earlier 'offer'). never duplicates,
+ *      because Application <-> Placement is 1:1.
+ * `joining_date || null` -> an empty date input is '', and backend wants null.
+ * feedback only included when non-empty, so we don't wipe existing feedback.
+ */
 async function confirmPlacement() {
   clearMessages()
   const payload = {
@@ -674,13 +916,21 @@ async function confirmPlacement() {
   try {
     await companyApi.updateApplicationStatus(placementModal.app.id, payload)
     success.value = 'Candidate marked as placed'
-    placementModal.app = null
+    placementModal.app = null // close the modal
     await refreshApplications()
   } catch (err) {
     error.value = err.response?.data?.error || 'Failed to record placement'
   }
 }
 
+/**
+ * onMounted -> boot.
+ * THE IMPORTANT BIT: a 403 here is not an error, it's a STATE. an unapproved
+ * company hits this every time. so we sniff err.response.status === 403 and
+ * render the yellow "pending approval" banner instead of a scary red one.
+ * any other failure (500, network) falls through to the normal red bar.
+ * finally{} kills the spinner either way.
+ */
 onMounted(async () => {
   try {
     await refreshAll()
