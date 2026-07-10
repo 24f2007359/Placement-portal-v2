@@ -3,7 +3,20 @@ from datetime import datetime
 from flask import Blueprint, g, jsonify, request
 
 from auth_utils import role_required
-from models import Application, ApplicationStatus, ApprovalStatus, Company, JobPosition, JobStatus, Student, db
+from models import (
+    Application,
+    ApplicationStatus,
+    ApprovalStatus,
+    Company,
+    JobPosition,
+    JobStatus,
+    Placement,
+    Student,
+    change_application_status,
+    db,
+    serialize_placement,
+    serialize_status_history,
+)
 
 company_bp = Blueprint("company", __name__, url_prefix="/api/company")
 
@@ -46,9 +59,10 @@ def _serialize_job(job):
     }
 
 
-def _serialize_application(application):
+def _serialize_application(application, include_history=False):
     student = application.student
-    return {
+    placement = application.placement
+    data = {
         "id": application.id,
         "job_id": application.job_id,
         "job_title": application.job_position.title if application.job_position else None,
@@ -60,6 +74,27 @@ def _serialize_application(application):
         "feedback": application.feedback,
         "interview_date": application.interview_date.isoformat() if application.interview_date else None,
         "applied_at": application.applied_at.isoformat() if application.applied_at else None,
+        "placement": serialize_placement(placement) if placement else None,
+    }
+    if include_history:
+        data["status_history"] = serialize_status_history(application)
+    return data
+
+
+def _serialize_student_profile(student):
+    return {
+        "id": student.id,
+        "full_name": student.full_name,
+        "email": student.user.email if student.user else None,
+        "institute_id": student.institute_id,
+        "contact": student.contact,
+        "branch": student.branch,
+        "cgpa": student.cgpa,
+        "graduation_year": student.graduation_year,
+        "skills": student.skills,
+        "education": student.education,
+        "experience": student.experience,
+        "resume_path": student.resume_path,
     }
 
 
@@ -245,6 +280,62 @@ def list_company_applications():
     return jsonify({"applications": [_serialize_application(app) for app in applications]})
 
 
+@company_bp.route("/applications/<int:application_id>", methods=["GET"])
+@role_required("company")
+def get_company_application(application_id):
+    company, error_response = _ensure_company_access()
+    if error_response:
+        return error_response
+
+    application = (
+        Application.query.join(JobPosition)
+        .filter(Application.id == application_id, JobPosition.company_id == company.id)
+        .first_or_404()
+    )
+    return jsonify(
+        {
+            "application": _serialize_application(application, include_history=True),
+            "student": _serialize_student_profile(application.student)
+            if application.student
+            else None,
+        }
+    )
+
+
+@company_bp.route("/students/<int:student_id>", methods=["GET"])
+@role_required("company")
+def view_student_profile(student_id):
+    company, error_response = _ensure_company_access()
+    if error_response:
+        return error_response
+
+    # A company may only view profiles of students who applied to one of its jobs.
+    application = (
+        Application.query.join(JobPosition)
+        .filter(JobPosition.company_id == company.id, Application.student_id == student_id)
+        .first()
+    )
+    if not application:
+        return jsonify({"error": "No applicant found with this student id"}), 404
+
+    return jsonify({"student": _serialize_student_profile(application.student)})
+
+
+@company_bp.route("/placements", methods=["GET"])
+@role_required("company")
+def list_company_placements():
+    company, error_response = _ensure_company_access()
+    if error_response:
+        return error_response
+
+    placements = (
+        Placement.query.filter_by(company_id=company.id)
+        .order_by(Placement.created_at.desc())
+        .all()
+    )
+    return jsonify({"placements": [serialize_placement(p) for p in placements]})
+
+
 @company_bp.route("/applications/<int:application_id>/status", methods=["PUT"])
 @role_required("company")
 def update_application_status(application_id):
@@ -264,12 +355,19 @@ def update_application_status(application_id):
         ApplicationStatus.SHORTLISTED.value,
         ApplicationStatus.INTERVIEW.value,
         ApplicationStatus.OFFER.value,
+        ApplicationStatus.PLACED.value,
         ApplicationStatus.REJECTED.value,
     }
     if status_raw not in allowed_statuses:
-        return jsonify({"error": "Invalid status. Use shortlisted, interview, offer, or rejected"}), 400
+        return (
+            jsonify(
+                {"error": "Invalid status. Use shortlisted, interview, offer, placed, or rejected"}
+            ),
+            400,
+        )
 
-    application.status = ApplicationStatus(status_raw)
+    new_status = ApplicationStatus(status_raw)
+
     if "feedback" in data:
         feedback = data.get("feedback")
         application.feedback = feedback.strip() if isinstance(feedback, str) and feedback.strip() else None
@@ -285,5 +383,64 @@ def update_application_status(application_id):
         else:
             application.interview_date = None
 
+    note = (data.get("feedback") or "").strip() or None
+    if application.status != new_status:
+        change_application_status(
+            application,
+            new_status,
+            changed_by_role="company",
+            changed_by_user_id=g.current_user.id,
+            note=note,
+        )
+
+    # Create/refresh a Placement record when a candidate is offered or placed.
+    if new_status in (ApplicationStatus.OFFER, ApplicationStatus.PLACED):
+        error = _upsert_placement(company, application, data)
+        if error:
+            return error
+
     db.session.commit()
-    return jsonify({"message": "Application status updated", "application": _serialize_application(application)})
+    return jsonify(
+        {
+            "message": "Application status updated",
+            "application": _serialize_application(application, include_history=True),
+        }
+    )
+
+
+def _upsert_placement(company, application, data):
+    """Create or update the Placement tied to an offered/placed application."""
+    job = application.job_position
+    placement = application.placement
+
+    position = (data.get("position") or "").strip() or (job.title if job else "Position")
+    salary = data.get("salary")
+    if salary in (None, ""):
+        salary = job.salary_max if job else None
+
+    joining_date = None
+    joining_raw = (data.get("joining_date") or "").strip() if data.get("joining_date") else ""
+    if joining_raw:
+        try:
+            joining_date = datetime.fromisoformat(joining_raw.replace("Z", "+00:00")).date()
+        except ValueError:
+            return jsonify({"error": "Invalid joining date format"}), 400
+
+    if placement is None:
+        placement = Placement(
+            student_id=application.student_id,
+            company_id=company.id,
+            application_id=application.id,
+            position=position,
+            salary=salary,
+            joining_date=joining_date,
+        )
+        db.session.add(placement)
+    else:
+        placement.position = position
+        if salary is not None:
+            placement.salary = salary
+        if joining_date is not None:
+            placement.joining_date = joining_date
+
+    return None

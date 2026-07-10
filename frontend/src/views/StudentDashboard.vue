@@ -10,7 +10,7 @@
 
     <template v-else>
       <div class="row g-3 mb-4">
-        <div class="col-md-3 col-6">
+        <div class="col-6 col-md">
           <div class="card text-center shadow-sm">
             <div class="card-body">
               <h3 class="text-primary mb-0">{{ stats.available_jobs }}</h3>
@@ -18,7 +18,7 @@
             </div>
           </div>
         </div>
-        <div class="col-md-3 col-6">
+        <div class="col-6 col-md">
           <div class="card text-center shadow-sm">
             <div class="card-body">
               <h3 class="text-primary mb-0">{{ stats.applications_submitted }}</h3>
@@ -26,7 +26,7 @@
             </div>
           </div>
         </div>
-        <div class="col-md-3 col-6">
+        <div class="col-6 col-md">
           <div class="card text-center shadow-sm">
             <div class="card-body">
               <h3 class="text-primary mb-0">{{ stats.shortlisted }}</h3>
@@ -34,11 +34,19 @@
             </div>
           </div>
         </div>
-        <div class="col-md-3 col-6">
+        <div class="col-6 col-md">
           <div class="card text-center shadow-sm">
             <div class="card-body">
               <h3 class="text-primary mb-0">{{ stats.interviews_scheduled }}</h3>
               <small class="text-muted">Interviews</small>
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-md">
+          <div class="card text-center shadow-sm">
+            <div class="card-body">
+              <h3 class="text-success mb-0">{{ stats.placed }}</h3>
+              <small class="text-muted">Placed</small>
             </div>
           </div>
         </div>
@@ -224,7 +232,10 @@
                   <td>{{ formatDate(app.applied_at) }}</td>
                   <td>{{ formatDate(app.interview_date) }}</td>
                   <td>{{ app.feedback || '—' }}</td>
-                  <td>
+                  <td class="d-flex gap-1">
+                    <button class="btn btn-sm btn-outline-secondary" @click="openTimeline(app)">
+                      Timeline
+                    </button>
                     <button
                       v-if="app.has_offer_letter"
                       class="btn btn-sm btn-success"
@@ -242,7 +253,63 @@
           </div>
         </div>
       </div>
+
+      <div v-show="activeTab === 'placements'" class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="mb-3">My Placements</h5>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>Company</th>
+                  <th>Position</th>
+                  <th>Salary</th>
+                  <th>Joining Date</th>
+                  <th>Recorded On</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="p in placements" :key="p.id">
+                  <td>{{ p.company_name }}</td>
+                  <td>{{ p.position }}</td>
+                  <td>{{ p.salary ? `₹${p.salary}` : '—' }}</td>
+                  <td>{{ formatDate(p.joining_date) }}</td>
+                  <td>{{ formatDate(p.created_at) }}</td>
+                </tr>
+                <tr v-if="!placements.length">
+                  <td colspan="5" class="text-center text-muted">No placements yet</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </template>
+
+    <!-- Status history timeline modal -->
+    <div v-if="timelineApp" class="modal-backdrop-custom" @click.self="timelineApp = null">
+      <div class="card shadow modal-card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h5 class="mb-0">Application Timeline</h5>
+              <small class="text-muted">{{ timelineApp.job_title }} — {{ timelineApp.company_name }}</small>
+            </div>
+            <button class="btn-close" @click="timelineApp = null"></button>
+          </div>
+          <ul class="list-unstyled timeline">
+            <li v-for="(entry, i) in timeline" :key="i" class="mb-3">
+              <span class="badge" :class="applicationStatusBadge(entry.to_status)">{{ entry.to_status }}</span>
+              <span v-if="entry.from_status" class="text-muted small ms-2">from {{ entry.from_status }}</span>
+              <div class="small text-muted">{{ formatDate(entry.created_at) }}
+                <span v-if="entry.changed_by_role">· by {{ entry.changed_by_role }}</span></div>
+              <div v-if="entry.note" class="small">{{ entry.note }}</div>
+            </li>
+            <li v-if="!timeline.length" class="text-muted">No history available</li>
+          </ul>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -260,17 +327,22 @@ const stats = reactive({
   applications_submitted: 0,
   shortlisted: 0,
   interviews_scheduled: 0,
+  placed: 0,
 })
 
 const tabs = [
   { id: 'profile', label: 'Profile' },
   { id: 'jobs', label: 'Browse Jobs' },
   { id: 'applications', label: 'My Applications' },
+  { id: 'placements', label: 'Placements' },
 ]
 const activeTab = ref('jobs')
 
 const jobs = ref([])
 const applications = ref([])
+const placements = ref([])
+const timelineApp = ref(null)
+const timeline = ref([])
 const selectedResume = ref(null)
 
 const jobSearch = reactive({ q: '', company: '' })
@@ -340,11 +412,29 @@ async function loadApplications() {
   applications.value = data.applications
 }
 
+async function loadPlacements() {
+  const { data } = await studentApi.getPlacements()
+  placements.value = data.placements
+}
+
+async function openTimeline(application) {
+  clearMessages()
+  timelineApp.value = application
+  timeline.value = []
+  try {
+    const { data } = await studentApi.getApplication(application.id)
+    timeline.value = data.application.status_history || []
+  } catch (err) {
+    error.value = err.response?.data?.error || 'Failed to load timeline'
+  }
+}
+
 async function refreshAll() {
   await loadDashboard()
   await loadProfile()
   await loadJobs()
   await loadApplications()
+  await loadPlacements()
 }
 
 function onResumeSelected(event) {

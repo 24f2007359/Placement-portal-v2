@@ -179,12 +179,13 @@
         <div class="card-body">
           <div class="row g-2 mb-3">
             <div class="col-md-4">
-              <select v-model="applicationFilter.status" class="form-select" @change="loadApplications">
+              <select v-model="applicationFilter.status" class="form-select" @change="onFilterChange">
                 <option value="">All statuses</option>
                 <option value="applied">Applied</option>
                 <option value="shortlisted">Shortlisted</option>
                 <option value="interview">Interview</option>
                 <option value="offer">Offer</option>
+                <option value="placed">Placed</option>
                 <option value="rejected">Rejected</option>
               </select>
             </div>
@@ -207,13 +208,16 @@
                     <small class="text-muted">{{ app.student_email || app.student_contact || '—' }}</small>
                   </td>
                   <td>{{ app.job_title }}</td>
-                  <td><span class="badge bg-info text-dark">{{ app.status }}</span></td>
+                  <td><span class="badge" :class="applicationStatusBadge(app.status)">{{ app.status }}</span></td>
                   <td>{{ formatDate(app.interview_date) }}</td>
                   <td class="d-flex flex-wrap gap-1">
                     <button class="btn btn-sm btn-primary" @click="setApplicationStatus(app, 'shortlisted')">Shortlist</button>
                     <button class="btn btn-sm btn-secondary" @click="setApplicationStatus(app, 'interview')">Interview</button>
                     <button class="btn btn-sm btn-success" @click="setApplicationStatus(app, 'offer')">Offer</button>
+                    <button class="btn btn-sm btn-outline-success" @click="openPlacementModal(app)">Place</button>
                     <button class="btn btn-sm btn-danger" @click="setApplicationStatus(app, 'rejected')">Reject</button>
+                    <button class="btn btn-sm btn-outline-secondary" @click="openTimeline(app)">Timeline</button>
+                    <button class="btn btn-sm btn-outline-info" @click="openProfile(app)">Profile</button>
                   </td>
                 </tr>
                 <tr v-if="!applications.length">
@@ -224,7 +228,121 @@
           </div>
         </div>
       </div>
+
+      <div v-show="activeTab === 'placements'" class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="mb-3">Placed Candidates</h5>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>Student</th>
+                  <th>Position</th>
+                  <th>Salary</th>
+                  <th>Joining Date</th>
+                  <th>Recorded On</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="p in placements" :key="p.id">
+                  <td>{{ p.student_name }}</td>
+                  <td>{{ p.position }}</td>
+                  <td>{{ p.salary ? `₹${p.salary}` : '—' }}</td>
+                  <td>{{ formatDate(p.joining_date) }}</td>
+                  <td>{{ formatDate(p.created_at) }}</td>
+                </tr>
+                <tr v-if="!placements.length">
+                  <td colspan="5" class="text-center text-muted">No placements recorded yet</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </template>
+
+    <!-- Placement details modal -->
+    <div v-if="placementModal.app" class="modal-backdrop-custom" @click.self="placementModal.app = null">
+      <div class="card shadow modal-card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <h5 class="mb-0">Record Placement</h5>
+            <button class="btn-close" @click="placementModal.app = null"></button>
+          </div>
+          <p class="text-muted small">{{ placementModal.app.student_name }} — {{ placementModal.app.job_title }}</p>
+          <form class="row g-3" @submit.prevent="confirmPlacement">
+            <div class="col-12">
+              <label class="form-label">Position</label>
+              <input v-model="placementModal.position" class="form-control" required />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Salary</label>
+              <input v-model.number="placementModal.salary" type="number" min="0" class="form-control" />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Joining Date</label>
+              <input v-model="placementModal.joining_date" type="date" class="form-control" />
+            </div>
+            <div class="col-12">
+              <label class="form-label">Feedback (optional)</label>
+              <input v-model="placementModal.feedback" class="form-control" />
+            </div>
+            <div class="col-12">
+              <button class="btn btn-success" type="submit">Mark as Placed</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status history timeline modal -->
+    <div v-if="timelineApp" class="modal-backdrop-custom" @click.self="timelineApp = null">
+      <div class="card shadow modal-card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h5 class="mb-0">Application Timeline</h5>
+              <small class="text-muted">{{ timelineApp.student_name }} — {{ timelineApp.job_title }}</small>
+            </div>
+            <button class="btn-close" @click="timelineApp = null"></button>
+          </div>
+          <ul class="list-unstyled timeline">
+            <li v-for="(entry, i) in timeline" :key="i" class="mb-3">
+              <span class="badge" :class="applicationStatusBadge(entry.to_status)">{{ entry.to_status }}</span>
+              <span v-if="entry.from_status" class="text-muted small ms-2">from {{ entry.from_status }}</span>
+              <div class="small text-muted">{{ formatDate(entry.created_at) }}
+                <span v-if="entry.changed_by_role">· by {{ entry.changed_by_role }}</span></div>
+              <div v-if="entry.note" class="small">{{ entry.note }}</div>
+            </li>
+            <li v-if="!timeline.length" class="text-muted">No history available</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Student profile modal -->
+    <div v-if="profileStudent" class="modal-backdrop-custom" @click.self="profileStudent = null">
+      <div class="card shadow modal-card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <h5 class="mb-0">Applicant Profile</h5>
+            <button class="btn-close" @click="profileStudent = null"></button>
+          </div>
+          <dl class="row mb-0">
+            <dt class="col-sm-4">Name</dt><dd class="col-sm-8">{{ profileStudent.full_name }}</dd>
+            <dt class="col-sm-4">Email</dt><dd class="col-sm-8">{{ profileStudent.email || '—' }}</dd>
+            <dt class="col-sm-4">Institute ID</dt><dd class="col-sm-8">{{ profileStudent.institute_id || '—' }}</dd>
+            <dt class="col-sm-4">Contact</dt><dd class="col-sm-8">{{ profileStudent.contact || '—' }}</dd>
+            <dt class="col-sm-4">Branch</dt><dd class="col-sm-8">{{ profileStudent.branch || '—' }}</dd>
+            <dt class="col-sm-4">CGPA</dt><dd class="col-sm-8">{{ profileStudent.cgpa ?? '—' }}</dd>
+            <dt class="col-sm-4">Grad. Year</dt><dd class="col-sm-8">{{ profileStudent.graduation_year || '—' }}</dd>
+            <dt class="col-sm-4">Skills</dt><dd class="col-sm-8">{{ profileStudent.skills || '—' }}</dd>
+            <dt class="col-sm-4">Education</dt><dd class="col-sm-8">{{ profileStudent.education || '—' }}</dd>
+            <dt class="col-sm-4">Experience</dt><dd class="col-sm-8">{{ profileStudent.experience || '—' }}</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -250,12 +368,25 @@ const tabs = [
   { id: 'jobs', label: 'My Jobs' },
   { id: 'post-job', label: 'Post Job' },
   { id: 'applications', label: 'Applications' },
+  { id: 'placements', label: 'Placements' },
 ]
 const activeTab = ref('jobs')
 
 const jobs = ref([])
 const applications = ref([])
+const placements = ref([])
 const selectedJob = ref(null)
+
+const timelineApp = ref(null)
+const timeline = ref([])
+const profileStudent = ref(null)
+const placementModal = reactive({
+  app: null,
+  position: '',
+  salary: null,
+  joining_date: '',
+  feedback: '',
+})
 
 const jobSearch = reactive({ q: '', status: '' })
 const applicationFilter = reactive({ status: '' })
@@ -297,6 +428,17 @@ function jobStatusBadge(status) {
   }[status] || 'bg-secondary'
 }
 
+function applicationStatusBadge(status) {
+  return {
+    applied: 'bg-secondary',
+    shortlisted: 'bg-info text-dark',
+    interview: 'bg-primary',
+    offer: 'bg-success',
+    placed: 'bg-success',
+    rejected: 'bg-danger',
+  }[status] || 'bg-secondary'
+}
+
 async function loadDashboard() {
   const { data } = await companyApi.getDashboard()
   Object.assign(stats, data.stats)
@@ -313,10 +455,22 @@ async function loadApplications() {
   applications.value = data.applications
 }
 
+async function loadPlacements() {
+  const { data } = await companyApi.getPlacements()
+  placements.value = data.placements
+}
+
+function onFilterChange() {
+  // Filtering shows all matching applications, not just the last opened job.
+  selectedJob.value = null
+  loadApplications()
+}
+
 async function refreshAll() {
   await loadDashboard()
   await loadJobs()
   await loadApplications()
+  await loadPlacements()
 }
 
 function resetJobForm() {
@@ -417,14 +571,72 @@ async function setApplicationStatus(application, status) {
   try {
     await companyApi.updateApplicationStatus(application.id, payload)
     success.value = `Application marked as ${status}`
-    if (selectedJob.value) {
-      await openJobApplications(selectedJob.value)
-    } else {
-      await loadApplications()
-    }
-    await loadDashboard()
+    await refreshApplications()
   } catch (err) {
     error.value = err.response?.data?.error || 'Failed to update application'
+  }
+}
+
+async function refreshApplications() {
+  if (selectedJob.value) {
+    await openJobApplications(selectedJob.value)
+  } else {
+    await loadApplications()
+  }
+  await loadDashboard()
+  await loadPlacements()
+}
+
+async function openTimeline(application) {
+  clearMessages()
+  timelineApp.value = application
+  timeline.value = []
+  try {
+    const { data } = await companyApi.getApplication(application.id)
+    timeline.value = data.application.status_history || []
+  } catch (err) {
+    error.value = err.response?.data?.error || 'Failed to load timeline'
+  }
+}
+
+async function openProfile(application) {
+  clearMessages()
+  profileStudent.value = null
+  try {
+    const { data } = await companyApi.getStudent(application.student_id)
+    profileStudent.value = data.student
+  } catch (err) {
+    error.value = err.response?.data?.error || 'Failed to load profile'
+  }
+}
+
+function openPlacementModal(application) {
+  clearMessages()
+  placementModal.app = application
+  placementModal.position = application.job_title || ''
+  placementModal.salary = null
+  placementModal.joining_date = ''
+  placementModal.feedback = ''
+}
+
+async function confirmPlacement() {
+  clearMessages()
+  const payload = {
+    status: 'placed',
+    position: placementModal.position,
+    salary: placementModal.salary,
+    joining_date: placementModal.joining_date || null,
+  }
+  if (placementModal.feedback) {
+    payload.feedback = placementModal.feedback
+  }
+  try {
+    await companyApi.updateApplicationStatus(placementModal.app.id, payload)
+    success.value = 'Candidate marked as placed'
+    placementModal.app = null
+    await refreshApplications()
+  } catch (err) {
+    error.value = err.response?.data?.error || 'Failed to record placement'
   }
 }
 

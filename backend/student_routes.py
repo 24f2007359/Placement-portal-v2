@@ -16,6 +16,9 @@ from models import (
     Placement,
     Student,
     db,
+    log_application_status,
+    serialize_placement,
+    serialize_status_history,
 )
 
 student_bp = Blueprint("student", __name__, url_prefix="/api/student")
@@ -79,11 +82,11 @@ def _serialize_job_for_student(job, student):
     }
 
 
-def _serialize_application(application):
+def _serialize_application(application, include_history=False):
     job = application.job_position
     company = job.company if job else None
     placement = application.placement
-    return {
+    data = {
         "id": application.id,
         "job_id": application.job_id,
         "job_title": job.title if job else None,
@@ -100,7 +103,11 @@ def _serialize_application(application):
         )
         or (placement is not None),
         "placement_id": placement.id if placement else None,
+        "placement": serialize_placement(placement) if placement else None,
     }
+    if include_history:
+        data["status_history"] = serialize_status_history(application)
+    return data
 
 
 def _approved_jobs_query():
@@ -178,6 +185,9 @@ def student_dashboard():
                 ).count(),
                 "interviews_scheduled": applications.filter(
                     Application.status == ApplicationStatus.INTERVIEW
+                ).count(),
+                "placed": applications.filter(
+                    Application.status == ApplicationStatus.PLACED
                 ).count(),
             },
         }
@@ -321,6 +331,13 @@ def apply_for_job(job_id):
 
     application = Application(student_id=student.id, job_id=job.id)
     db.session.add(application)
+    log_application_status(
+        application,
+        to_status=ApplicationStatus.APPLIED,
+        changed_by_role="student",
+        changed_by_user_id=g.current_user.id,
+        note="Application submitted",
+    )
     try:
         db.session.commit()
     except IntegrityError:
@@ -368,7 +385,22 @@ def get_application(application_id):
     application = Application.query.filter_by(
         id=application_id, student_id=student.id
     ).first_or_404()
-    return jsonify({"application": _serialize_application(application)})
+    return jsonify({"application": _serialize_application(application, include_history=True)})
+
+
+@student_bp.route("/placements", methods=["GET"])
+@role_required("student")
+def list_student_placements():
+    student, error_response = _ensure_student_access()
+    if error_response:
+        return error_response
+
+    placements = (
+        Placement.query.filter_by(student_id=student.id)
+        .order_by(Placement.created_at.desc())
+        .all()
+    )
+    return jsonify({"placements": [serialize_placement(p) for p in placements]})
 
 
 @student_bp.route("/applications/<int:application_id>/offer-letter", methods=["GET"])

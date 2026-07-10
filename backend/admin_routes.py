@@ -11,6 +11,8 @@ from models import (
     Student,
     User,
     db,
+    serialize_placement,
+    serialize_status_history,
 )
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
@@ -291,3 +293,74 @@ def remove_job(job_id):
 def list_applications():
     applications = Application.query.order_by(Application.applied_at.desc()).all()
     return jsonify({"applications": [_application_dict(a) for a in applications]})
+
+
+@admin_bp.route("/applications/<int:application_id>", methods=["GET"])
+@role_required("admin")
+def get_application_detail(application_id):
+    application = Application.query.get_or_404(application_id)
+    detail = _application_dict(application)
+    detail["feedback"] = application.feedback
+    detail["interview_date"] = (
+        application.interview_date.isoformat() if application.interview_date else None
+    )
+    detail["status_history"] = serialize_status_history(application)
+    detail["placement"] = (
+        serialize_placement(application.placement) if application.placement else None
+    )
+    return jsonify(
+        {
+            "application": detail,
+            "student": _student_profile_dict(application.student)
+            if application.student
+            else None,
+        }
+    )
+
+
+def _student_profile_dict(student):
+    return {
+        "id": student.id,
+        "full_name": student.full_name,
+        "email": student.user.email if student.user else None,
+        "institute_id": student.institute_id,
+        "contact": student.contact,
+        "branch": student.branch,
+        "cgpa": student.cgpa,
+        "graduation_year": student.graduation_year,
+        "skills": student.skills,
+        "education": student.education,
+        "experience": student.experience,
+        "resume_path": student.resume_path,
+        "is_blacklisted": student.is_blacklisted,
+    }
+
+
+@admin_bp.route("/students/<int:student_id>", methods=["GET"])
+@role_required("admin")
+def get_student_detail(student_id):
+    student = Student.query.get_or_404(student_id)
+    applications = (
+        Application.query.filter_by(student_id=student.id)
+        .order_by(Application.applied_at.desc())
+        .all()
+    )
+    placements = (
+        Placement.query.filter_by(student_id=student.id)
+        .order_by(Placement.created_at.desc())
+        .all()
+    )
+    return jsonify(
+        {
+            "student": _student_profile_dict(student),
+            "applications": [_application_dict(a) for a in applications],
+            "placements": [serialize_placement(p) for p in placements],
+        }
+    )
+
+
+@admin_bp.route("/placements", methods=["GET"])
+@role_required("admin")
+def list_placements():
+    placements = Placement.query.order_by(Placement.created_at.desc()).all()
+    return jsonify({"placements": [serialize_placement(p) for p in placements]})

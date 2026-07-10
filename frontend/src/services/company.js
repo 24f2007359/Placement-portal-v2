@@ -22,4 +22,13 @@ export const companyApi = {
   updateApplicationStatus(id, payload) {
     return api.put(`/company/applications/${id}/status`, payload)
   },
+  getApplication(id) {
+    return api.get(`/company/applications/${id}`)
+  },
+  getStudent(id) {
+    return api.get(`/company/students/${id}`)
+  },
+  getPlacements() {
+    return api.get('/company/placements')
+  },
 }

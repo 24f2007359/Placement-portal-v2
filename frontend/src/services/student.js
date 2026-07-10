@@ -29,6 +29,9 @@ export const studentApi = {
   getApplication(id) {
     return api.get(`/student/applications/${id}`)
   },
+  getPlacements() {
+    return api.get('/student/placements')
+  },
   downloadOfferLetter(id) {
     return api.get(`/student/applications/${id}/offer-letter`, {
       responseType: 'blob',

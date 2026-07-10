@@ -224,6 +224,7 @@
                 <th>Company</th>
                 <th>Status</th>
                 <th>Applied At</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -231,14 +232,81 @@
                 <td>{{ a.student_name }}</td>
                 <td>{{ a.job_title }}</td>
                 <td>{{ a.company_name }}</td>
-                <td><span class="badge bg-info text-dark">{{ a.status }}</span></td>
+                <td><span class="badge" :class="applicationStatusBadge(a.status)">{{ a.status }}</span></td>
                 <td>{{ formatDate(a.applied_at) }}</td>
+                <td>
+                  <button class="btn btn-sm btn-outline-secondary" @click="openApplicationDetail(a)">History</button>
+                </td>
               </tr>
               <tr v-if="!applications.length">
-                <td colspan="5" class="text-center text-muted">No applications found</td>
+                <td colspan="6" class="text-center text-muted">No applications found</td>
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Placements -->
+    <div v-show="activeTab === 'placements'" class="card shadow-sm">
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Student</th>
+                <th>Company</th>
+                <th>Position</th>
+                <th>Salary</th>
+                <th>Joining Date</th>
+                <th>Recorded On</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in placements" :key="p.id">
+                <td>{{ p.student_name }}</td>
+                <td>{{ p.company_name }}</td>
+                <td>{{ p.position }}</td>
+                <td>{{ p.salary ? `₹${p.salary}` : '—' }}</td>
+                <td>{{ formatDate(p.joining_date) }}</td>
+                <td>{{ formatDate(p.created_at) }}</td>
+              </tr>
+              <tr v-if="!placements.length">
+                <td colspan="6" class="text-center text-muted">No placements recorded yet</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Application detail + status history modal -->
+    <div v-if="detailApp" class="modal-backdrop-custom" @click.self="detailApp = null">
+      <div class="card shadow modal-card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h5 class="mb-0">Application History</h5>
+              <small class="text-muted">{{ detailApp.student_name }} — {{ detailApp.job_title }}</small>
+            </div>
+            <button class="btn-close" @click="detailApp = null"></button>
+          </div>
+          <div v-if="detailStudent" class="mb-3 small">
+            <strong>Applicant:</strong> {{ detailStudent.full_name }}
+            <span v-if="detailStudent.branch">· {{ detailStudent.branch }}</span>
+            <span v-if="detailStudent.cgpa != null">· CGPA {{ detailStudent.cgpa }}</span>
+            <span v-if="detailStudent.email">· {{ detailStudent.email }}</span>
+          </div>
+          <ul class="list-unstyled timeline">
+            <li v-for="(entry, i) in detailTimeline" :key="i" class="mb-3">
+              <span class="badge" :class="applicationStatusBadge(entry.to_status)">{{ entry.to_status }}</span>
+              <span v-if="entry.from_status" class="text-muted small ms-2">from {{ entry.from_status }}</span>
+              <div class="small text-muted">{{ formatDate(entry.created_at) }}
+                <span v-if="entry.changed_by_role">· by {{ entry.changed_by_role }}</span></div>
+              <div v-if="entry.note" class="small">{{ entry.note }}</div>
+            </li>
+            <li v-if="!detailTimeline.length" class="text-muted">No history available</li>
+          </ul>
         </div>
       </div>
     </div>
@@ -254,6 +322,7 @@ const tabs = [
   { id: 'students', label: 'Students' },
   { id: 'jobs', label: 'Job Postings' },
   { id: 'applications', label: 'Applications' },
+  { id: 'placements', label: 'Placements' },
 ]
 
 const activeTab = ref('companies')
@@ -262,6 +331,10 @@ const companies = ref([])
 const students = ref([])
 const jobs = ref([])
 const applications = ref([])
+const placements = ref([])
+const detailApp = ref(null)
+const detailTimeline = ref([])
+const detailStudent = ref(null)
 const error = ref('')
 const success = ref('')
 
@@ -275,6 +348,17 @@ function statusBadge(status) {
 
 function jobStatusBadge(status) {
   return { pending: 'bg-warning text-dark', approved: 'bg-success', active: 'bg-primary', closed: 'bg-secondary' }[status] || 'bg-secondary'
+}
+
+function applicationStatusBadge(status) {
+  return {
+    applied: 'bg-secondary',
+    shortlisted: 'bg-info text-dark',
+    interview: 'bg-primary',
+    offer: 'bg-success',
+    placed: 'bg-success',
+    rejected: 'bg-danger',
+  }[status] || 'bg-secondary'
 }
 
 function formatDate(iso) {
@@ -323,12 +407,32 @@ async function loadApplications() {
   applications.value = data.applications
 }
 
+async function loadPlacements() {
+  const { data } = await adminApi.getPlacements()
+  placements.value = data.placements
+}
+
+async function openApplicationDetail(application) {
+  clearMessages()
+  detailApp.value = application
+  detailTimeline.value = []
+  detailStudent.value = null
+  try {
+    const { data } = await adminApi.getApplication(application.id)
+    detailTimeline.value = data.application.status_history || []
+    detailStudent.value = data.student
+  } catch (err) {
+    error.value = err.response?.data?.error || 'Failed to load application history'
+  }
+}
+
 async function refreshAll() {
   await loadDashboard()
   await loadCompanies()
   await loadStudents()
   await loadJobs()
   await loadApplications()
+  await loadPlacements()
 }
 
 const approveCompany = (id) => withAction(() => adminApi.approveCompany(id), 'Company approved')

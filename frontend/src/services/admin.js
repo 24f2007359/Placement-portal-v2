@@ -49,4 +49,13 @@ export const adminApi = {
   getApplications() {
     return api.get('/admin/applications')
   },
+  getApplication(id) {
+    return api.get(`/admin/applications/${id}`)
+  },
+  getStudent(id) {
+    return api.get(`/admin/students/${id}`)
+  },
+  getPlacements() {
+    return api.get('/admin/placements')
+  },
 }

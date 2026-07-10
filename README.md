@@ -135,6 +135,26 @@ Companies must be **approved by admin** before they can access the company dashb
 
 Students only see jobs from **approved companies** with job status **approved** or **active**. Duplicate applications to the same job are blocked.
 
+### Application History & Status Tracking (Milestone 6)
+
+Every application status change is recorded in an audit trail (`ApplicationStatusHistory`), producing a full timeline: **Applied → Shortlisted → Interview → Offer → Placed / Rejected**. Marking a candidate **Offer** or **Placed** creates a `Placement` record (position, salary, joining date).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/student/applications/:id` | Application detail **incl. status history** |
+| GET | `/api/student/placements` | Student's own placement records |
+| PUT | `/api/company/applications/:id/status` | Now also accepts `placed`; logs history, upserts placement (`position`, `salary`, `joining_date`) |
+| GET | `/api/company/applications/:id` | Application detail + history + applicant profile |
+| GET | `/api/company/students/:id` | View profile of a student who applied to the company's jobs |
+| GET | `/api/company/placements` | Company's placement records |
+| GET | `/api/admin/applications/:id` | Application detail + full history + student profile |
+| GET | `/api/admin/students/:id` | Student profile + applications + placements |
+| GET | `/api/admin/placements` | All placement records |
+
+- **Complete history:** students, companies and admin can all view the full application timeline; students see their own records, companies see applicants to their own jobs, admin sees everything.
+- **Placement records** are created/updated (never duplicated) when a candidate is offered or placed.
+- Re-run `python seed_admin.py` once after pulling M6 to create the new `application_status_history` table (existing data is preserved).
+
 Default admin credentials (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars):
 
 | Field | Value |
@@ -152,8 +172,9 @@ Default admin credentials (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` env var
 | `JobPosition` | Placement drive / job posting (many per company) |
 | `Application` | Student application to a job (unique per student+job) |
 | `Placement` | Final placement record linked to student, company, and optionally an application |
+| `ApplicationStatusHistory` | Audit trail: one row per application status change (Milestone 6) |
 
-Relationships: Company → JobPosition (1:n), Student → Application (1:n), JobPosition → Application (1:n), Application → Placement (1:1 optional).
+Relationships: Company → JobPosition (1:n), Student → Application (1:n), JobPosition → Application (1:n), Application → Placement (1:1 optional), Application → ApplicationStatusHistory (1:n).
 
 ## Milestone Progress
 
@@ -165,7 +186,8 @@ Relationships: Company → JobPosition (1:n), Student → Application (1:n), Job
 | M3 — Admin dashboard & management | Done |
 | M4 — Company dashboard & job/application management | Done |
 | M5 — Student dashboard & job application system | Done |
-| M6–M8 — Core features | Pending |
+| M6 — Application history & status tracking | Done |
+| M7–M8 — Core features | Pending |
 
 ## Development Notes
 
