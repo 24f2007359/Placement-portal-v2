@@ -30,11 +30,20 @@ backend/
   admin_routes.py   # Admin management APIs (Milestone 3)
   company_routes.py # Company job/application APIs (Milestone 4)
   student_routes.py # Student profile/job/application APIs (Milestone 5)
+  export_routes.py  # Async export/report endpoints (Milestone 7)
+  celery_app.py     # Celery instance, beat schedule, Flask context (Milestone 7)
+  tasks.py          # Background jobs: reminders, reports, CSV exports (Milestone 7)
+  mail_utils.py     # Gmail SMTP sender with console fallback (Milestone 7)
   auth_utils.py     # JWT helpers and RBAC decorators
   config.py
   seed_admin.py     # Creates DB tables + pre-defined admin user
+  instance/
+    placement.db    # SQLite database
+    exports/        # Generated CSV exports (gitignored)
+    reports/        # Generated HTML/PDF reports (gitignored)
 frontend/           # Vue.js SPA (Vite)
   src/views/        # Login, register, role dashboards
+  src/services/     # API clients (auth, admin, company, student, exports)
 ```
 
 ## Backend Setup (Milestone 1)
@@ -155,6 +164,53 @@ Every application status change is recorded in an audit trail (`ApplicationStatu
 - **Placement records** are created/updated (never duplicated) when a candidate is offered or placed.
 - Re-run `python seed_admin.py` once after pulling M6 to create the new `application_status_history` table (existing data is preserved).
 
+### Background Jobs — Celery + Redis (Milestone 7)
+
+Slow and periodic work runs outside the request cycle. Flask pushes a job onto **Redis**, returns a `task_id` immediately, and a **Celery worker** executes it; **Celery Beat** fires the scheduled jobs on a clock.
+
+| Job | Type | Schedule |
+|-----|------|----------|
+| `send_interview_reminders` | Emails students whose interview is within 24h | Daily 09:00 IST |
+| `generate_monthly_placement_reports` | Per-company HTML **+ PDF** report with stats & analytics, emailed to HR | 1st of month, 06:00 IST |
+| `export_applications_csv` | User-triggered async CSV export | On demand |
+| `export_placements_csv` | User-triggered async CSV export | On demand |
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/exports/applications` | Start async applications export → `202 {task_id}` |
+| POST | `/api/exports/placements` | Start async placements export → `202 {task_id}` |
+| GET | `/api/exports/status/:task_id` | Poll job state (`PENDING`/`SUCCESS`), returns `filename` when ready |
+| GET | `/api/exports/download/:filename` | Download the generated CSV |
+| POST | `/api/admin/reminders/interviews` | Run the reminder job now |
+| POST | `/api/admin/reports/monthly` | Generate this period's reports for all companies |
+| POST | `/api/admin/reports/company/:id` | Generate one company's report |
+| GET | `/api/admin/reports` | List generated report files |
+| GET | `/api/admin/reports/download/:filename` | Download a report (HTML/PDF) |
+
+Downloads are guarded two ways: non-admins may only fetch files stamped with their own user id, and resolved paths must stay inside the export/report directory (blocks `../` traversal).
+
+#### Running the background stack (WSL Ubuntu)
+
+```bash
+sudo apt install -y redis-server
+sudo service redis-server start && redis-cli ping     # → PONG
+
+cd backend && python app.py                                    # 1. API
+cd backend && celery -A celery_app.celery worker --loglevel=info  # 2. worker
+cd backend && celery -A celery_app.celery beat   --loglevel=info  # 3. scheduler
+```
+
+On **native Windows** add `--pool=solo` to the worker (Celery's prefork pool is Unix-only). To run tasks synchronously with no Redis or worker (handy for tests), set `CELERY_TASK_ALWAYS_EAGER=1`.
+
+#### Email (Gmail SMTP)
+
+```bash
+export MAIL_USERNAME="you@gmail.com"
+export MAIL_PASSWORD="<16-char Gmail App Password>"
+```
+
+Create an [App Password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification); Gmail rejects normal passwords over SMTP. **If unset, emails are logged to the console instead of sent** — jobs never crash on a missing mail config.
+
 Default admin credentials (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars):
 
 | Field | Value |
@@ -187,7 +243,8 @@ Relationships: Company → JobPosition (1:n), Student → Application (1:n), Job
 | M4 — Company dashboard & job/application management | Done |
 | M5 — Student dashboard & job application system | Done |
 | M6 — Application history & status tracking | Done |
-| M7–M8 — Core features | Pending |
+| M7 — Celery + Redis background jobs | Done |
+| M8 — Redis caching | Pending |
 
 ## Development Notes
 

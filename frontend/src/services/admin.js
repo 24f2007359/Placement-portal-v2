@@ -58,4 +58,20 @@ export const adminApi = {
   getPlacements() {
     return api.get('/admin/placements')
   },
+  // Milestone 7 — background jobs
+  runInterviewReminders() {
+    return api.post('/admin/reminders/interviews')
+  },
+  runMonthlyReports() {
+    return api.post('/admin/reports/monthly')
+  },
+  runCompanyReport(companyId) {
+    return api.post(`/admin/reports/company/${companyId}`)
+  },
+  getReports() {
+    return api.get('/admin/reports')
+  },
+  downloadReport(filename) {
+    return api.get(`/admin/reports/download/${filename}`, { responseType: 'blob' })
+  },
 }

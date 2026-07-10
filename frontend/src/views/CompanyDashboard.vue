@@ -177,7 +177,7 @@
 
       <div v-show="activeTab === 'applications'" class="card shadow-sm">
         <div class="card-body">
-          <div class="row g-2 mb-3">
+          <div class="row g-2 mb-3 align-items-center">
             <div class="col-md-4">
               <select v-model="applicationFilter.status" class="form-select" @change="onFilterChange">
                 <option value="">All statuses</option>
@@ -188,6 +188,12 @@
                 <option value="placed">Placed</option>
                 <option value="rejected">Rejected</option>
               </select>
+            </div>
+            <div class="col-md-8 text-md-end">
+              <button class="btn btn-outline-primary" :disabled="exporting" @click="exportApplications">
+                <span v-if="exporting" class="spinner-border spinner-border-sm me-1"></span>
+                {{ exporting ? exportState : 'Export Applications (CSV)' }}
+              </button>
             </div>
           </div>
           <div class="table-responsive">
@@ -231,7 +237,13 @@
 
       <div v-show="activeTab === 'placements'" class="card shadow-sm">
         <div class="card-body">
-          <h5 class="mb-3">Placed Candidates</h5>
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0">Placed Candidates</h5>
+            <button class="btn btn-outline-primary btn-sm" :disabled="exporting" @click="exportPlacements">
+              <span v-if="exporting" class="spinner-border spinner-border-sm me-1"></span>
+              {{ exporting ? exportState : 'Export Placements (CSV)' }}
+            </button>
+          </div>
           <div class="table-responsive">
             <table class="table table-hover align-middle">
               <thead>
@@ -350,6 +362,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useAuth } from '../services/auth'
 import { companyApi } from '../services/company'
+import { downloadExport, exportApi, runExport } from '../services/exports'
 
 const auth = useAuth()
 const loading = ref(true)
@@ -380,6 +393,8 @@ const selectedJob = ref(null)
 const timelineApp = ref(null)
 const timeline = ref([])
 const profileStudent = ref(null)
+const exporting = ref(false)
+const exportState = ref('')
 const placementModal = reactive({
   app: null,
   position: '',
@@ -472,6 +487,32 @@ async function refreshAll() {
   await loadApplications()
   await loadPlacements()
 }
+
+/** Kick off a Celery export, poll until the worker finishes, then download. */
+async function runAndDownload(startFn, label) {
+  clearMessages()
+  exporting.value = true
+  exportState.value = 'Queued...'
+  try {
+    const status = await runExport(startFn, {
+      onState: (state) => {
+        exportState.value = state === 'SUCCESS' ? 'Downloading...' : `${state}...`
+      },
+    })
+    await downloadExport(status.filename)
+    success.value = `${label} exported (${status.rows} rows). A copy was emailed to you.`
+  } catch (err) {
+    error.value = err.response?.data?.error || err.message || 'Export failed'
+  } finally {
+    exporting.value = false
+    exportState.value = ''
+  }
+}
+
+const exportApplications = () =>
+  runAndDownload(exportApi.startApplicationsExport, 'Applications')
+const exportPlacements = () =>
+  runAndDownload(exportApi.startPlacementsExport, 'Placements')
 
 function resetJobForm() {
   Object.assign(jobForm, {

@@ -280,6 +280,52 @@
       </div>
     </div>
 
+    <!-- Reports & background jobs -->
+    <div v-show="activeTab === 'reports'" class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="mb-3">Background Jobs</h5>
+        <p class="text-muted small">
+          These jobs also run automatically on a schedule via Celery Beat
+          (reminders daily at 09:00, monthly reports on the 1st at 06:00).
+          Trigger them here on demand. Requires the Celery worker and Redis to be running.
+        </p>
+        <div class="d-flex flex-wrap gap-2 mb-4">
+          <button class="btn btn-primary" :disabled="jobBusy" @click="runInterviewReminders">
+            <span v-if="jobBusy === 'reminders'" class="spinner-border spinner-border-sm me-1"></span>
+            Send Interview Reminders
+          </button>
+          <button class="btn btn-success" :disabled="jobBusy" @click="runMonthlyReports">
+            <span v-if="jobBusy === 'reports'" class="spinner-border spinner-border-sm me-1"></span>
+            Generate Monthly Reports
+          </button>
+          <button class="btn btn-outline-primary" :disabled="exporting" @click="exportPlacements">
+            <span v-if="exporting" class="spinner-border spinner-border-sm me-1"></span>
+            {{ exporting ? exportState : 'Export All Placements (CSV)' }}
+          </button>
+        </div>
+
+        <div v-if="jobResult" class="alert alert-info small">
+          <strong>Last job result:</strong> {{ jobResult }}
+        </div>
+
+        <h5 class="mb-3">Generated Reports</h5>
+        <button class="btn btn-sm btn-outline-secondary mb-2" @click="loadReports">Refresh list</button>
+        <ul class="list-group">
+          <li
+            v-for="file in reports"
+            :key="file"
+            class="list-group-item d-flex justify-content-between align-items-center"
+          >
+            <span>{{ file }}</span>
+            <button class="btn btn-sm btn-outline-primary" @click="getReport(file)">Download</button>
+          </li>
+          <li v-if="!reports.length" class="list-group-item text-muted text-center">
+            No reports generated yet
+          </li>
+        </ul>
+      </div>
+    </div>
+
     <!-- Application detail + status history modal -->
     <div v-if="detailApp" class="modal-backdrop-custom" @click.self="detailApp = null">
       <div class="card shadow modal-card">
@@ -316,6 +362,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { adminApi } from '../services/admin'
+import { downloadExport, exportApi, runExport, saveBlob } from '../services/exports'
 
 const tabs = [
   { id: 'companies', label: 'Companies' },
@@ -323,6 +370,7 @@ const tabs = [
   { id: 'jobs', label: 'Job Postings' },
   { id: 'applications', label: 'Applications' },
   { id: 'placements', label: 'Placements' },
+  { id: 'reports', label: 'Reports & Jobs' },
 ]
 
 const activeTab = ref('companies')
@@ -335,6 +383,11 @@ const placements = ref([])
 const detailApp = ref(null)
 const detailTimeline = ref([])
 const detailStudent = ref(null)
+const reports = ref([])
+const jobBusy = ref('')
+const jobResult = ref('')
+const exporting = ref(false)
+const exportState = ref('')
 const error = ref('')
 const success = ref('')
 
@@ -426,6 +479,69 @@ async function openApplicationDetail(application) {
   }
 }
 
+async function loadReports() {
+  const { data } = await adminApi.getReports()
+  reports.value = data.reports
+}
+
+/** Compact, human-readable summary of a Celery job's return value. */
+function summariseJob(result) {
+  if (!result || typeof result !== 'object') return 'done'
+  if ('sent' in result) {
+    return `${result.sent} reminder(s) sent, ${result.skipped} skipped (of ${result.checked} checked)`
+  }
+  if ('companies' in result) {
+    return `${result.companies} report(s) generated for ${result.period}`
+  }
+  return 'done'
+}
+
+function getReport(filename) {
+  return saveBlob(() => adminApi.downloadReport(filename), filename)
+}
+
+/** Trigger a Celery job, poll until it finishes, and surface the result. */
+async function runJob(key, startFn, label) {
+  clearMessages()
+  jobBusy.value = key
+  jobResult.value = ''
+  try {
+    const status = await runExport(startFn)
+    jobResult.value = `${label} — ${summariseJob(status.result)}`
+    success.value = `${label} completed`
+    await loadReports()
+  } catch (err) {
+    error.value = err.response?.data?.error || err.message || `${label} failed`
+  } finally {
+    jobBusy.value = ''
+  }
+}
+
+const runInterviewReminders = () =>
+  runJob('reminders', adminApi.runInterviewReminders, 'Interview reminders')
+const runMonthlyReports = () =>
+  runJob('reports', adminApi.runMonthlyReports, 'Monthly report generation')
+
+async function exportPlacements() {
+  clearMessages()
+  exporting.value = true
+  exportState.value = 'Queued...'
+  try {
+    const status = await runExport(exportApi.startPlacementsExport, {
+      onState: (state) => {
+        exportState.value = state === 'SUCCESS' ? 'Downloading...' : `${state}...`
+      },
+    })
+    await downloadExport(status.filename)
+    success.value = `Placements exported (${status.rows} rows)`
+  } catch (err) {
+    error.value = err.response?.data?.error || err.message || 'Export failed'
+  } finally {
+    exporting.value = false
+    exportState.value = ''
+  }
+}
+
 async function refreshAll() {
   await loadDashboard()
   await loadCompanies()
@@ -433,6 +549,7 @@ async function refreshAll() {
   await loadJobs()
   await loadApplications()
   await loadPlacements()
+  await loadReports()
 }
 
 const approveCompany = (id) => withAction(() => adminApi.approveCompany(id), 'Company approved')
