@@ -48,30 +48,106 @@ frontend/           # Vue.js SPA (Vite)
   src/services/     # API clients (auth, admin, company, student, exports)
 ```
 
-## Backend Setup (Milestone 1)
+## Running the Project
+
+The full app has **five processes**: Redis, the Flask API, a Celery worker, Celery Beat (scheduler), and the Vue dev server. The core auth/dashboard flows need only the API + frontend; the background jobs (Milestone 7) and caching (Milestone 8) need Redis and Celery too.
+
+> **Environment note:** this project is developed on **WSL Ubuntu** (Linux). The commands below use Linux paths and the `venv/bin/` layout. On native Windows, use `venv\Scripts\activate` instead of `source venv/bin/activate`, and add `--pool=solo` to the Celery worker command (Celery's default pool is Unix-only).
+
+### Prerequisites
+
+- Python 3.11+ (developed on 3.14)
+- Node.js 18+ and npm
+- Redis server
+
+### 1. One-time setup
 
 ```bash
+# --- Backend ---
 cd backend
-python -m venv venv
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate            # Windows: venv\Scripts\activate
+pip3 install -r requirements.txt
+python seed_admin.py                # creates SQLite tables + the pre-seeded admin
+deactivate
 
-pip install -r requirements.txt
-python seed_admin.py    # creates SQLite DB + admin user
-python app.py           # starts API on http://127.0.0.1:5000
+# --- Redis (WSL Ubuntu / Debian) ---
+sudo apt update && sudo apt install -y redis-server
+
+# --- Frontend ---
+cd ../frontend
+npm install
 ```
 
-## Frontend Setup (Milestone 2)
+**Mail (optional):** create `backend/.env` to enable real email; without it, jobs log the message to the console instead of sending (nothing breaks).
+
+```ini
+MAIL_SERVER=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USE_TLS=1
+MAIL_USERNAME=you@gmail.com
+MAIL_PASSWORD=your-16-char-gmail-app-password
+```
+
+Use a Gmail **App Password** (needs 2-Step Verification), not your account password. `backend/.env` is gitignored.
+
+### 2. Start the services
+
+Open a terminal per service. Start Redis first, then the rest in any order.
 
 ```bash
-cd frontend
-npm install
-npm run dev             # starts UI on http://127.0.0.1:5173
+# 1. Redis
+sudo service redis-server start
+redis-cli ping                      # -> PONG
+
+# 2. Flask API                     (http://127.0.0.1:5000)
+cd backend && source venv/bin/activate
+python app.py
+
+# 3. Celery worker  (runs the background jobs — needs Redis)
+cd backend && source venv/bin/activate
+celery -A celery_app.celery worker --loglevel=info
+#   native Windows: append  --pool=solo
+
+# 4. Celery Beat    (fires the scheduled jobs — needs Redis)
+cd backend && source venv/bin/activate
+celery -A celery_app.celery beat --loglevel=info
+
+# 5. Frontend dev server            (http://127.0.0.1:5173)
+cd frontend && npm run dev
 ```
 
-Run **both** backend and frontend for the full auth flow. Vite proxies `/api` requests to Flask.
+Open **http://127.0.0.1:5173** and log in. Vite proxies `/api` calls to Flask, so both must be running for anything beyond the login page.
+
+> `celery` not found? Your virtualenv isn't activated. Either `source venv/bin/activate` first, or call the binary directly: `./venv/bin/celery -A celery_app.celery worker --loglevel=info`.
+
+### Which processes do I actually need?
+
+| I want to… | Redis | API | Worker | Beat | Frontend |
+|------------|:-----:|:---:|:------:|:----:|:--------:|
+| Log in, use dashboards, apply, approve | – | ✓ | – | – | ✓ |
+| Run CSV exports / trigger reports manually | ✓ | ✓ | ✓ | – | ✓ |
+| See the daily/monthly jobs fire on schedule | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Benefit from response caching | ✓ | ✓ | – | – | ✓ |
+
+The API runs fine without Redis — caching simply falls back to the database, and job triggers will time out until a worker is up.
+
+### Default admin login
+
+| Field | Value |
+|-------|-------|
+| Email | `admin@placement.local` |
+| Password | `admin123` |
+
+Override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` before running `seed_admin.py`. Companies and students self-register from the login page.
+
+### Production build
+
+```bash
+cd frontend && npm run build        # outputs an optimised bundle to frontend/dist/
+```
+
+Serve `frontend/dist/` behind a web server and run the Flask API under a WSGI server (e.g. Gunicorn). See `docs/MILESTONE-7-*` and `docs/MILESTONE-8-*` for the Celery/Redis production notes.
 
 ### Authentication (Milestone 2)
 
@@ -247,13 +323,6 @@ curl -sI localhost:5000/api/student/jobs -H "Authorization: Bearer $TOKEN" | gre
 **Redis is optional.** If it's down, every read degrades to a cache miss and serves correct data straight from the database; writes still succeed. Set `CACHE_ENABLED=0` to bypass the cache entirely.
 
 Redis DB layout: `db 0` Celery broker · `db 1` Celery results · `db 2` this cache — so flushing the cache can never eat a queued job.
-
-Default admin credentials (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars):
-
-| Field | Value |
-|-------|-------|
-| Email | `admin@placement.local` |
-| Password | `admin123` |
 
 ### Database Models
 
